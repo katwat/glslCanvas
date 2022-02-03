@@ -34,9 +34,9 @@ export default class GlslCanvas {
         contextOptions = contextOptions || {};
         options = options || {};
 
-        if (canvas.hasAttribute('data-fullscreen') &&
-            (canvas.getAttribute('data-fullscreen') == "1" ||
-            canvas.getAttribute('data-fullscreen') == "true" )
+        if (canvas.dataset.fullscreen &&
+            (canvas.dataset.fullscreen == "1" ||
+            canvas.dataset.fullscreen == "true" )
         ) {
             this.width = window.innerWidth;
             this.height = window.innerHeight;
@@ -60,32 +60,49 @@ export default class GlslCanvas {
         this.BUFFER_COUNT = 0;
         // this.TEXTURE_COUNT = 0;
 
-        this.vertexString = contextOptions.vertexString || `
+		// MOD by katwat - GLSL ES 3.0 support
+        this.vertexString = contextOptions.vertexString || (canvas.dataset.es3 ? `
 #ifdef GL_ES
 precision mediump float;
 #endif
-
-attribute vec2 a_position;
-attribute vec2 a_texcoord;
-
-varying vec2 v_texcoord;
-
+in vec2 a_position;
+in vec2 a_texcoord;
+out vec2 v_texcoord;
 void main() {
     gl_Position = vec4(a_position, 0.0, 1.0);
     v_texcoord = a_texcoord;
 }
-`;
-        this.fragmentString = contextOptions.fragmentString || `
+` : `
 #ifdef GL_ES
 precision mediump float;
 #endif
-
+attribute vec2 a_position;
+attribute vec2 a_texcoord;
 varying vec2 v_texcoord;
-
+void main() {
+    gl_Position = vec4(a_position, 0.0, 1.0);
+    v_texcoord = a_texcoord;
+}
+`);
+		// MOD by katwat - GLSL ES 3.0 support
+        this.fragmentString = contextOptions.fragmentString || ( canvas.dataset.es3 ? `
+#ifdef GL_ES
+precision mediump float;
+#endif
+in vec2 v_texcoord;
+out vec4 fragColor;
+void main(){
+    fragColor = vec4(0.0);
+}
+` : `
+#ifdef GL_ES
+precision mediump float;
+#endif
+varying vec2 v_texcoord;
 void main(){
     gl_FragColor = vec4(0.0);
 }
-`;
+`);
 
         // GL Context
         let gl = setupWebGL(canvas, contextOptions, options.onError);
@@ -93,32 +110,40 @@ void main(){
             return;
         }
         this.gl = gl;
-        this.timeLoad = this.timePrev = performance.now();
+		this.isWebGL2 = gl instanceof WebGL2RenderingContext; // MOD by katwat
+
+        // MOD by katwat
+        this.timeElap = 0.0;
         this.timeDelta = 0.0;
         this.forceRender = true;
+        this.forceRenderCount = 0;
         this.paused = false;
         this.realToCSSPixels = window.devicePixelRatio || 1;
 
+        // MOD by katwat
         // Allow alpha
-        canvas.style.backgroundColor = contextOptions.backgroundColor || 'rgba(1,1,1,0)';
+        //canvas.style.backgroundColor = contextOptions.backgroundColor || 'rgba(1,1,1,0)';
+        if (contextOptions.backgroundColor) {
+            canvas.style.backgroundColor = contextOptions.backgroundColor;
+        }
 
         // Load shader
-        if (canvas.hasAttribute('data-fragment')) {
-            this.fragmentString = canvas.getAttribute('data-fragment');
+        if (canvas.dataset.fragment) {
+            this.fragmentString = canvas.dataset.fragment;
         }
-        else if (canvas.hasAttribute('data-fragment-url')) {
-            let source = canvas.getAttribute('data-fragment-url');
+        else if (canvas.dataset.fragmentUrl) {
+            let source = canvas.dataset.fragmentUrl;
             xhr.get(source, (error, response, body) => {
                 this.load(body, this.vertexString);
             });
         }
 
         // Load shader
-        if (canvas.hasAttribute('data-vertex')) {
-            this.vertexString = canvas.getAttribute('data-vertex');
+        if (canvas.dataset.vertex) {
+            this.vertexString = canvas.dataset.vertex;
         }
-        else if (canvas.hasAttribute('data-vertex-url')) {
-            let source = canvas.getAttribute('data-vertex-url');
+        else if (canvas.dataset.vertexUrl) {
+            let source = canvas.dataset.vertexUrl;
             xhr.get(source, (error, response, body) => {
                 this.load(this.fragmentString, body);
             });
@@ -146,8 +171,8 @@ void main(){
         this.gl.vertexAttribPointer(verticesLoc, 2, gl.FLOAT, false, 0, 0);
 
         // load TEXTURES
-        if (canvas.hasAttribute('data-textures')) {
-            let imgList = canvas.getAttribute('data-textures').split(',');
+        if (canvas.dataset.textures) {
+            let imgList = canvas.dataset.textures.split(',');
             for (let nImg in imgList) {
                 this.setUniform('u_tex' + nImg, imgList[nImg]);
             }
@@ -169,16 +194,27 @@ void main(){
                 sandbox.setMouse(mouse);
             }
 
-            if (sandbox.resize()) {
-                sandbox.forceRender = true;
-            }
-            
+			// MOD by katwat
             sandbox.render();
+            if (sandbox.resize()) {
+                sandbox.forceRenderCount = Object.keys(sandbox.buffers).length ? 2 : 1; // refill swappable buffers
+            }
+			if (sandbox.forceRenderCount > 0) {
+				sandbox.forceRenderCount--;
+				sandbox.forceRender = true;
+			}
             sandbox.animationFrameRequest = window.requestAnimationFrame(RenderLoop);
         }
 
         // Start
         this.setMouse({ x: 0, y: 0 });
+
+		// MOD by katwat
+        this.frame = 0;
+        this.frameRate = 0.0;
+        this.fpsFrame = 0;
+        this.fpsPrev = this.timePrev = performance.now();
+
         RenderLoop();
         return this;
     }
@@ -226,6 +262,8 @@ void main(){
         this.nTime = (this.fragmentString.match(/u_time/g) || []).length;
         this.nDate = (this.fragmentString.match(/u_date/g) || []).length;
         this.nMouse = (this.fragmentString.match(/u_mouse/g) || []).length;
+        this.nFrame = (this.fragmentString.match(/u_frame/g) || []).length; // MOD by katwat
+        this.nFrameRate = (this.fragmentString.match(/u_frameRate/g) || []).length; // MOD by katwat
         this.animated = this.nDate > 1 || this.nTime > 1 || this.nMouse > 1;
 
         let nTextures = this.fragmentString.search(/sampler2D/g);
@@ -285,7 +323,7 @@ void main(){
         this.trigger('load', {});
 
         this.forceRender = true;
-        this.render();
+        //this.render(); // MOD by katwat
     }
 
     test (callback, fragString, vertString) {
@@ -491,14 +529,32 @@ void main(){
 
     render () {
         this.visible = isCanvasVisible(this.canvas);
+
+		// MOD by katwat
+        let now = performance.now();
+        this.timeDelta =  (now - this.timePrev) / 1000.0;
+        this.timePrev = now;
+
+		// MOD by katwat
+		this.fpsFrame++;
+		let delta = now - this.fpsPrev;
+		if (delta > 1000) {
+			this.frameRate = this.fpsFrame * 1000 / delta;
+			this.fpsPrev = now;
+			this.fpsFrame = 0;
+		}
+
         if ( this.forceRender || this.change ||
             (this.animated && this.visible && ! this.paused) ) {
 
             // Update Uniforms when are need
             let date = new Date();
-            let now = performance.now();
-            this.timeDelta =  (now - this.timePrev) / 1000.0;
-            this.timePrev = now;
+
+            // MOD by katwat
+            //let now = performance.now();
+            //this.timeDelta = (now - this.timePrev) / 1000.0;
+            //this.timePrev = now;
+
             if (this.nDelta > 1) {
                 // set the delta time uniform
                 this.uniform('1f', 'float', 'u_delta', this.timeDelta);
@@ -506,12 +562,23 @@ void main(){
 
             if (this.nTime > 1 ) {
                 // set the elapsed time uniform
-                this.uniform('1f', 'float', 'u_time', (now - this.timeLoad) / 1000.0);
+                //this.uniform('1f', 'float', 'u_time', (now - this.timeLoad) / 1000.0);
+                this.uniform('1f', 'float', 'u_time', this.timeElap); // MOD by katwat
             }
 
             if (this.nDate) {
                 // Set date uniform: year/month/day/time_in_sec
                 this.uniform('4f', 'float', 'u_date', date.getFullYear(), date.getMonth(), date.getDate(), date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds() + date.getMilliseconds() * 0.001 );
+            }
+
+			// MOD by katwat
+            if (this.nFrame > 1) {
+                // current frame
+                this.uniform('1i', 'int', 'u_frame', this.frame);
+            }
+            if (this.nFrameRate > 1) {
+                // number of frames rendered per second
+                this.uniform('1f', 'float', 'u_frameRate', this.frameRate);
             }
 
             // set the resolution uniform
@@ -534,6 +601,10 @@ void main(){
             this.trigger('render', {});
             this.change = false;
             this.forceRender = false;
+
+			// MOD by katwat
+            this.timeElap += this.timeDelta; // update timer only during play.
+            this.frame++;
         }
     }
 
@@ -633,17 +704,21 @@ void main(){
     }
 
     // create a buffers
-    createBuffer(W, H, program) {
+    createBuffer(W, H, program) { // MOD by katwat
         const gl = this.gl;
+        const RGBA32F = this.isWebGL2 ? gl.RGBA32F : gl.RGBA; // why?
         let index = this.BUFFER_COUNT;
         this.BUFFER_COUNT += 2;
-        gl.getExtension('OES_texture_float');
+        //gl.getExtension('OES_texture_float'); -> setupWebGL()
         var texture = gl.createTexture();
         gl.activeTexture(gl.TEXTURE0 + index);
         gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.FLOAT, null);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texImage2D(gl.TEXTURE_2D, 0, RGBA32F, W, H, 0, gl.RGBA, gl.FLOAT, null);
+        //gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         var buffer = gl.createFramebuffer();
@@ -653,31 +728,42 @@ void main(){
             buffer: buffer,
             W: W,
             H: H,
-            resize: function(W, H) {
-                gl.bindFramebuffer(gl.FRAMEBUFFER, buffer);
+            resize: function(W, H) { 
+                /* Quit copying overlapping areas.
+                //gl.bindFramebuffer(gl.FRAMEBUFFER, buffer);
+                gl.bindFramebuffer(gl.FRAMEBUFFER, this.buffer);
                 var minW = Math.min(W, this.W);
                 var minH = Math.min(H, this.H);
-                var pixels = new Float32Array(minW * minH * 4);
-                gl.readPixels(0, 0, minW, minH, gl.RGBA, gl.FLOAT, pixels);
+                //var pixels = new Float32Array(minW * minH * 4);
+                //gl.readPixels(0, 0, minW, minH, gl.RGBA, gl.FLOAT, pixels);
+                var pixels = new Uint8Array(minW * minH * 4);
+                gl.readPixels(0, 0, minW, minH, gl.RGBA, gl.UNSIGNED_BYTE, pixels);*/
                 gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-                var newIndex = index + 1;
+                var newIndex = this.index + 1;
                 var newTexture = gl.createTexture();
                 gl.activeTexture(gl.TEXTURE0 + newIndex);
                 gl.bindTexture(gl.TEXTURE_2D, newTexture);
-                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.FLOAT, null);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+                gl.texImage2D(gl.TEXTURE_2D, 0, RGBA32F, W, H, 0, gl.RGBA, gl.FLOAT, null);
+                //gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+                //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+                //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
                 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
                 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-                gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, minW, minH, gl.RGBA, gl.FLOAT, pixels);
+                /*//gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, minW, minH, RGBA32F, gl.FLOAT, pixels);
+                gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, minW, minH, gl.RGBA, gl.UNSIGNED_BYTE, pixels);*/
                 var newBuffer = gl.createFramebuffer();
                 gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-                gl.deleteTexture(texture);
-                gl.activeTexture(gl.TEXTURE0 + index);
+                //gl.deleteTexture(texture);
+                gl.deleteTexture(this.texture);
+                gl.activeTexture(gl.TEXTURE0 + this.index);
                 gl.bindTexture(gl.TEXTURE_2D, newTexture);
-                index = this.index = index;
+                /*index = this.index = index;
                 texture = this.texture = newTexture;
-                buffer = this.buffer = newBuffer;
+                buffer = this.buffer = newBuffer;*/
+                this.texture = newTexture;
+                this.buffer = newBuffer;
                 this.W = W;
                 this.H = H;
             },
@@ -700,7 +786,7 @@ void main(){
     }
 
     version() {
-        return '0.1.7';
+        return '0.1.7 (MOD by katwat)';
     }
 }
 

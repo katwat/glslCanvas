@@ -23,7 +23,13 @@ function makeFailHTML(msg) {
  */
 let GET_A_WEBGL_BROWSER = `
 	This page requires a browser that supports WebGL.<br/>
-	<a href="http://get.webgl.org">Click here to upgrade your browser.</a>
+	<a href="https://get.webgl.org/">Click here to upgrade your browser.</a>
+`;
+
+// MOD by katwat
+let GET_A_WEBGL2_BROWSER = `
+	This page requires a browser that supports WebGL2.<br/>
+	<a href="https://get.webgl.org/webgl2/">Click here to upgrade your browser.</a>
 `;
 
 /**
@@ -75,16 +81,40 @@ export function setupWebGL (canvas, optAttribs, onError) {
         }
     }
 
-    if (!window.WebGLRenderingContext) {
-        handleError(ERROR_BROWSER_SUPPORT, GET_A_WEBGL_BROWSER);
-        return null;
-    }
+	// MOD by katwat
+	if (canvas.dataset.es3) { // require WebGL2 & GLSL ES 3.0
+		if (!WebGL2RenderingContext) {
+			handleError(ERROR_BROWSER_SUPPORT, GET_A_WEBGL2_BROWSER);
+			return null;
+    	}	
+	} else {
+		if (!WebGLRenderingContext) {
+			handleError(ERROR_BROWSER_SUPPORT, GET_A_WEBGL_BROWSER);
+			return null;
+    	}
+	}
 
     let context = create3DContext(canvas, optAttribs);
     if (!context) {
         handleError(ERROR_OTHER, OTHER_PROBLEM);
     } else {
-        context.getExtension('OES_standard_derivatives');
+    	// MOD by katwat
+		// -> https://github.com/mrdoob/three.js/blob/dev/src/renderers/webgl/WebGLExtensions.js
+		if (WebGL2RenderingContext && context instanceof WebGL2RenderingContext) {
+			context.getExtension( 'EXT_color_buffer_float' );
+		} else {
+ 			//context.getExtension( 'WEBcontext_depth_texture' ) || context.getExtension( 'WEBKIT_WEBcontext_depth_texture' ) || context.getExtension( 'MOZ_WEBGL_depth_texture' );
+			context.getExtension( 'OES_texture_float' );
+			//context.getExtension( 'OES_texture_half_float' );
+			//context.getExtension( 'OES_texture_half_float_linear' );
+			context.getExtension( 'OES_standard_derivatives' );
+			context.getExtension( 'OES_element_index_uint' );
+			//ext_oes_vao = context.getExtension( 'OES_vertex_array_object' );
+			//ext_angle_ia = context.getExtension( 'ANGLE_instanced_arrays' );
+		}
+		context.getExtension( 'OES_texture_float_linear' );
+		//context.getExtension( 'EXT_color_buffer_half_float' );
+		//context.getExtension( 'WEBGL_multisampled_render_to_texture' );
     }
     return context;
 }
@@ -96,7 +126,7 @@ export function setupWebGL (canvas, optAttribs, onError) {
  * @return {!WebGLContext} The created context.
  */
 export function create3DContext(canvas, optAttribs) {
-    let names = ['webgl', 'experimental-webgl'];
+    /*let names = ['webgl', 'experimental-webgl'];
     let context = null;
     for (var ii = 0; ii < names.length; ++ii) {
         try {
@@ -107,7 +137,19 @@ export function create3DContext(canvas, optAttribs) {
             }
         }
     }
-    return context;
+    return context;*/
+	// MOD by katwat
+	try {
+		let context = null;
+		if (canvas.dataset.es3) {
+			context = canvas.getContext('webgl2', optAttribs);
+		} else {
+			context = canvas.getContext('webgl', optAttribs) || canvas.getContext('experimental-webgl', optAttribs);
+		}
+		return context;
+	} catch(e) {
+		return null;
+	}
 }
 
 /*
@@ -117,7 +159,7 @@ export function createShader(main, source, type, offset) {
     let gl = main.gl;
 
     let shader = gl.createShader(type);
-    gl.shaderSource(shader, source);
+    gl.shaderSource(shader, main.canvas.dataset.es3 ? '#version 300 es\n' + source : source); // MOD by katwat
     gl.compileShader(shader);
 
     let compiled = gl.getShaderParameter(shader, gl.COMPILE_STATUS);

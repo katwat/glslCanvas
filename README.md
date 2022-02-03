@@ -1,123 +1,93 @@
-[GlslCanvas](https://github.com/patriciogonzalezvivo/glslCanvas) is JavaScript Library that helps you easily load GLSL Fragment and Vertex Shaders into an HTML canvas. I have used this in my [Book of Shaders](http://thebookofshaders.com) and [glslEditor](http://editor.thebookofshaders.com).
+# これは何？
 
-[![Donate](https://www.paypalobjects.com/en_US/i/btn/btn_donate_SM.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=4BQMKQJDQ9XH6)
+[GlslCanvas](https://github.com/patriciogonzalezvivo/glslCanvas) 0.1.7 を fork して、WebGL2 および GLSL ES 3.0 にも対応可能とした版です。  
+基本的な使い方はオリジナルの[GlslCanvas](https://github.com/patriciogonzalezvivo/glslCanvas)を参照してください。
 
-## How to use it?
+## canvasに指定可能なdata属性を追加
 
-There are different ways to do this. But first, make sure you are loading the latest version of ```GlslCanvas.js``` on your page by adding this line to your HTML:
+対象 canvas に ```data-es3="true"``` という属性と値を追加すると、WebGL2 および GLSL ES 3.0 対応となります。ちなみに値は空文字で無ければ何でも構いません。
+
+また、シェーダーのコードの先頭に ```#version 300 es``` を自動で追加するようになっているので、別途記述する必要はありません。
+
+なお、GLSL ES 1.0 とは記述の仕方が異なる部分があるので注意してください。[こちら](https://wgld.org/d/webgl2/w003.html)が参考になります。
+
+## uniform 変数を追加
+
+[こちら](https://webglfundamentals.org/webgl/lessons/webgl-shadertoy.html)を参考に、[Shadertoy](https://www.shadertoy.com/)で導入されている uniform 変数をいくつか追加しました。
+
+* ```int u_frame``` : 開始からのフレーム番号（0～）
+* ```float u_frameRate``` : 秒あたりの描画フレーム数（いわゆるFPS）
+
+## テクスチャの自動ロード機能
+
+オリジナルの[GlslCanvas](https://github.com/patriciogonzalezvivo/glslCanvas)では説明されていませんが、以下のようにシェーダのコードにコメントでファイル名を書いておくと、自動でテクスチャを読み込んで uniform 変数に設定される機能があります。便利です。
+
+```uniform sampler2D u_logo; // data/logo.jpg```
+
+## オフスクリーン描画バッファ機能
+
+これまたオリジナルの[GlslCanvas](https://github.com/patriciogonzalezvivo/glslCanvas)では説明されていませんが、__#ifdef__ や __#if defined()__ のプリプロセッサを以下のようにシェーダのコードに書くと、バッファが自動で作られ、それらを対象とした描画が行える機能があります。
+
+```glsl
+	︙
+uniform sampler2D u_buffer0;
+uniform sampler2D u_buffer1;
+	︙
+#if defined( BUFFER_0 )
+	︙
+(u_buffer0を対象としたコード）
+	︙
+#elif defined( BUFFER_1 )
+	︙
+（u_buffer1を対象としたコード）
+	︙
+#else
+	︙
+（メインバッファ=canvasを対象としたコード）
+	︙
+#endif
+	︙
+```
+
+上記のように書いた場合、バッファ０への描画、バッファ１への描画、メインバッファへの描画の計３回の描画が一回のレンダー処理で行われます。バッファはテクスチャとして参照できますので、うまく使うことで色々な効果を表現できたりするようです。[こちら](https://github.com/patriciogonzalezvivo/glslCanvas/blob/master/buffers.html)にサンプルコードがあります。
+
+## Shadertoyのコードを移植してみるには
+
+[Shadertoy](https://www.shadertoy.com/)には様々なコードが紹介されていますが、それらを比較的容易に移植することが可能です。
+
+以下にやり方の一例を挙げます。ただし、あくまで一例です。調整が必要になる場合があるかもしれません。また、うまく行かない場合もあるかもしれません。ご了承ください。
+
 ```html
-<script type="text/javascript" src="https://rawgit.com/patriciogonzalezvivo/glslCanvas/master/dist/GlslCanvas.js"></script>
+<canvas id="glslCanvas" width="320" height="180" data-es3="true" data-fragment="
+#ifdef GL_ES
+precision mediump float;
+#endif
+
+// 必要な uniform を列挙。
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform int u_frame;
+uniform sampler2D u_buffer0;
+
+// Shadertoyでの名前を変換。
+#define iResolution u_resolution
+#define iTime u_time
+#define iFrame u_frame
+#define iChannel0 u_buffer0
+
+#if defined( BUFFER_0 )
+	︙
+（ここに Shadertoy の「Buffer A」のコードを書く）
+	︙
+#else
+	︙
+（ここに Shadertoy の「Image」のコードを書く）
+	︙
+#endif
+
+out vec4 fragColor;
+void main() {
+	mainImage(fragColor,gl_FragCoord.xy);
+}
+"></canvas>
 ```
-
-or if you are using npm package manager on your console do:
-
-```bash
-npm install glslCanvas
-```
-
-### The easy way
-
-1. Create a canvas element in your HTML.
-2. Add the class name ```glslCanvas``` to the canvas.
-3. Assign it a shader...
-	* through a url using the attribute ```data-fragment-url```
-	* or directly writing your code inside the ```data-fragment``` attribute
-
-```html
-<canvas class="glslCanvas" data-fragment-url="shader.frag" width="500" height="500"></canvas>
-```
-
-That's all! glslCanvas will automatically load a WebGL context in that ```<canvas>``` element, compile the shader and animate it for you.
-
-As you can see, in this example we are loading the fragment shader by setting the attribute ```data-fragment-url``` to a url. But there are also a few other ways to load data to our ```glslCanvas```:
-
-* ```data-fragment``` : load a fragment shader by providing the content of the shader as a string
-* ```data-fragment-url``` : load a fragment shader by providing a valid url
-* ```data-vertex``` : load a vertex shader by providing the content of the shader as a string
-* ```data-vertex-url``` : load a vertex shader by providing a valid url
-* ```data-textures```: add a list of texture urls separated by commas (ex: ```data-textures="texture.jpg,normal_map.png,something.jpg"```). Textures will be assigned in order to ```uniform sampler2D``` variables with names following this style: ```u_tex0```, ```u_tex1```, ```u_tex2```, etc.
-
-All the catched ```.glslCanvas``` element whill be stored in the ```windows.glslCanvases``` array.
-
-### The JS way
- 
-Create a ```<canvas>``` element and construct a ```glsCanvas()``` sandbox from it.
-
-```javascript
-var canvas = document.createElement("canvas");
-var sandbox = new GlslCanvas(canvas);
-```
-
-In the case you need to reload the 
-
-### Reloading shaders from JS
-
-You can change the content of the shader as many times you want. Here are some examples:
-
-```javascript
-// Load only the Fragment Shader
-var string_frag_code = "main(){\ngl_FragColor = vec4(1.0);\n}\n";
-sandbox.load(string_frag_code);
-
-// Load a Fragment and Vertex Shader
-var string_vert_code = "attribute vec4 a_position; main(){\ggl_Position = a_position;\n}\n";
-sandbox.load(string_frag_code, string_vert_code);
-```
-
-### Default Uniforms
-
-Some uniforms are automatically loaded for you:
-
-* ```u_time```: a ```float``` representing elapsed time in seconds.
-* ```u_resolution```: a ```vec2``` representing the dimensions of the viewport.
-* ```u_mouse```: a ```vec2``` representing the position of the mouse, defined in Javascript with ```.setMouse({x:[value],y:[value])```.
-* ```u_tex[number]```: a ```sampler2D``` containing textures loaded with the ```data-textures``` attribute.
-
-You can also send your custom uniforms to a shader with ```.setUniform([name],[...value])```. GlslCanvas will parse the value you provide to determine its type. If the value is a ```String```, GlslCanvas will parse it as the url of a texture.
-
-```javascript
-
-// Assign .5 to "uniform float u_brightness"
-sandbox.setUniform("u_brightness",.5); 
-
-// Assign (.2,.3) to "uniform vec2 u_position"
-sandbox.setUniform("u_position",.2,.3);
-
-// Assign a red color to "uniform vec3 u_color"
-sandbox.setUniform("u_color",1,0,0); 
-
-// Load a new texture and assign it to "uniform sampler2D u_texture"
-sandbox.setUniform("u_texture","data/texture.jpg");
-```
-
-### Quick start demo
-
-In the [```index.html```](https://github.com/patriciogonzalezvivo/glslCanvas/blob/gh-pages/index.html) file, you will find handy example code to start.
-
-[Demo page: patriciogonzalezvivo.github.io/glslCanvas/](http://patriciogonzalezvivo.github.io/glslCanvas/)
-
-## Collaborate 
-
-If you'd like to contribute to this code, you need to:
-
-* Fork and clone [this repository](https://github.com/patriciogonzalezvivo/glslCanvas)
-```bash
-git clone https://github.com/patriciogonzalezvivo/glslCanvas.git
-cd glslCanvas
-```
-* Install [node, npm](https://nodejs.org/download/) and [yarn](http://yarnpkg.com)
-* Install dependencies
-```bash
-yarn
-```
-* Run rollup in dev mode while you edit
-```bash
-yarn run dev
-```
-* Build for production
-```bash
-yarn run build
-```
-* Push to your local fork and make your pull request
-
-Thank you

@@ -217,7 +217,10 @@ function makeFailHTML(msg) {
  * Message for getting a webgl browser
  * @type {string}
  */
-var GET_A_WEBGL_BROWSER = '\n\tThis page requires a browser that supports WebGL.<br/>\n\t<a href="http://get.webgl.org">Click here to upgrade your browser.</a>\n';
+var GET_A_WEBGL_BROWSER = '\n\tThis page requires a browser that supports WebGL.<br/>\n\t<a href="https://get.webgl.org/">Click here to upgrade your browser.</a>\n';
+
+// MOD by katwat
+var GET_A_WEBGL2_BROWSER = '\n\tThis page requires a browser that supports WebGL2.<br/>\n\t<a href="https://get.webgl.org/webgl2/">Click here to upgrade your browser.</a>\n';
 
 /**
  * Message for need better hardware
@@ -265,16 +268,41 @@ function setupWebGL(canvas, optAttribs, onError) {
         }
     }
 
-    if (!window.WebGLRenderingContext) {
-        handleError(ERROR_BROWSER_SUPPORT, GET_A_WEBGL_BROWSER);
-        return null;
+    // MOD by katwat
+    if (canvas.dataset.es3) {
+        // require WebGL2 & GLSL ES 3.0
+        if (!WebGL2RenderingContext) {
+            handleError(ERROR_BROWSER_SUPPORT, GET_A_WEBGL2_BROWSER);
+            return null;
+        }
+    } else {
+        if (!WebGLRenderingContext) {
+            handleError(ERROR_BROWSER_SUPPORT, GET_A_WEBGL_BROWSER);
+            return null;
+        }
     }
 
     var context = create3DContext(canvas, optAttribs);
     if (!context) {
         handleError(ERROR_OTHER, OTHER_PROBLEM);
     } else {
-        context.getExtension('OES_standard_derivatives');
+        // MOD by katwat
+        // -> https://github.com/mrdoob/three.js/blob/dev/src/renderers/webgl/WebGLExtensions.js
+        if (WebGL2RenderingContext && context instanceof WebGL2RenderingContext) {
+            context.getExtension('EXT_color_buffer_float');
+        } else {
+            //context.getExtension( 'WEBcontext_depth_texture' ) || context.getExtension( 'WEBKIT_WEBcontext_depth_texture' ) || context.getExtension( 'MOZ_WEBGL_depth_texture' );
+            context.getExtension('OES_texture_float');
+            //context.getExtension( 'OES_texture_half_float' );
+            //context.getExtension( 'OES_texture_half_float_linear' );
+            context.getExtension('OES_standard_derivatives');
+            context.getExtension('OES_element_index_uint');
+            //ext_oes_vao = context.getExtension( 'OES_vertex_array_object' );
+            //ext_angle_ia = context.getExtension( 'ANGLE_instanced_arrays' );
+        }
+        context.getExtension('OES_texture_float_linear');
+        //context.getExtension( 'EXT_color_buffer_half_float' );
+        //context.getExtension( 'WEBGL_multisampled_render_to_texture' );
     }
     return context;
 }
@@ -286,18 +314,30 @@ function setupWebGL(canvas, optAttribs, onError) {
  * @return {!WebGLContext} The created context.
  */
 function create3DContext(canvas, optAttribs) {
-    var names = ['webgl', 'experimental-webgl'];
-    var context = null;
+    /*let names = ['webgl', 'experimental-webgl'];
+    let context = null;
     for (var ii = 0; ii < names.length; ++ii) {
         try {
             context = canvas.getContext(names[ii], optAttribs);
-        } catch (e) {
+        } catch(e) {
             if (context) {
                 break;
             }
         }
     }
-    return context;
+    return context;*/
+    // MOD by katwat
+    try {
+        var context = null;
+        if (canvas.dataset.es3) {
+            context = canvas.getContext('webgl2', optAttribs);
+        } else {
+            context = canvas.getContext('webgl', optAttribs) || canvas.getContext('experimental-webgl', optAttribs);
+        }
+        return context;
+    } catch (e) {
+        return null;
+    }
 }
 
 /*
@@ -307,7 +347,7 @@ function createShader(main, source, type, offset) {
     var gl = main.gl;
 
     var shader = gl.createShader(type);
-    gl.shaderSource(shader, source);
+    gl.shaderSource(shader, main.canvas.dataset.es3 ? '#version 300 es\n' + source : source); // MOD by katwat
     gl.compileShader(shader);
 
     var compiled = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
@@ -982,7 +1022,7 @@ var GlslCanvas = function () {
         contextOptions = contextOptions || {};
         options = options || {};
 
-        if (canvas.hasAttribute('data-fullscreen') && (canvas.getAttribute('data-fullscreen') == "1" || canvas.getAttribute('data-fullscreen') == "true")) {
+        if (canvas.dataset.fullscreen && (canvas.dataset.fullscreen == "1" || canvas.dataset.fullscreen == "true")) {
             this.width = window.innerWidth;
             this.height = window.innerHeight;
             canvas.width = window.innerWidth;
@@ -1005,8 +1045,10 @@ var GlslCanvas = function () {
         this.BUFFER_COUNT = 0;
         // this.TEXTURE_COUNT = 0;
 
-        this.vertexString = contextOptions.vertexString || '\n#ifdef GL_ES\nprecision mediump float;\n#endif\n\nattribute vec2 a_position;\nattribute vec2 a_texcoord;\n\nvarying vec2 v_texcoord;\n\nvoid main() {\n    gl_Position = vec4(a_position, 0.0, 1.0);\n    v_texcoord = a_texcoord;\n}\n';
-        this.fragmentString = contextOptions.fragmentString || '\n#ifdef GL_ES\nprecision mediump float;\n#endif\n\nvarying vec2 v_texcoord;\n\nvoid main(){\n    gl_FragColor = vec4(0.0);\n}\n';
+        // MOD by katwat - GLSL ES 3.0 support
+        this.vertexString = contextOptions.vertexString || (canvas.dataset.es3 ? '\n#ifdef GL_ES\nprecision mediump float;\n#endif\nin vec2 a_position;\nin vec2 a_texcoord;\nout vec2 v_texcoord;\nvoid main() {\n    gl_Position = vec4(a_position, 0.0, 1.0);\n    v_texcoord = a_texcoord;\n}\n' : '\n#ifdef GL_ES\nprecision mediump float;\n#endif\nattribute vec2 a_position;\nattribute vec2 a_texcoord;\nvarying vec2 v_texcoord;\nvoid main() {\n    gl_Position = vec4(a_position, 0.0, 1.0);\n    v_texcoord = a_texcoord;\n}\n');
+        // MOD by katwat - GLSL ES 3.0 support
+        this.fragmentString = contextOptions.fragmentString || (canvas.dataset.es3 ? '\n#ifdef GL_ES\nprecision mediump float;\n#endif\nin vec2 v_texcoord;\nout vec4 fragColor;\nvoid main(){\n    fragColor = vec4(0.0);\n}\n' : '\n#ifdef GL_ES\nprecision mediump float;\n#endif\nvarying vec2 v_texcoord;\nvoid main(){\n    gl_FragColor = vec4(0.0);\n}\n');
 
         // GL Context
         var gl = setupWebGL(canvas, contextOptions, options.onError);
@@ -1014,30 +1056,38 @@ var GlslCanvas = function () {
             return;
         }
         this.gl = gl;
-        this.timeLoad = this.timePrev = performance.now();
+        this.isWebGL2 = gl instanceof WebGL2RenderingContext; // MOD by katwat
+
+        // MOD by katwat
+        this.timeElap = 0.0;
         this.timeDelta = 0.0;
         this.forceRender = true;
+        this.forceRenderCount = 0;
         this.paused = false;
         this.realToCSSPixels = window.devicePixelRatio || 1;
 
+        // MOD by katwat
         // Allow alpha
-        canvas.style.backgroundColor = contextOptions.backgroundColor || 'rgba(1,1,1,0)';
+        //canvas.style.backgroundColor = contextOptions.backgroundColor || 'rgba(1,1,1,0)';
+        if (contextOptions.backgroundColor) {
+            canvas.style.backgroundColor = contextOptions.backgroundColor;
+        }
 
         // Load shader
-        if (canvas.hasAttribute('data-fragment')) {
-            this.fragmentString = canvas.getAttribute('data-fragment');
-        } else if (canvas.hasAttribute('data-fragment-url')) {
-            var source = canvas.getAttribute('data-fragment-url');
+        if (canvas.dataset.fragment) {
+            this.fragmentString = canvas.dataset.fragment;
+        } else if (canvas.dataset.fragmentUrl) {
+            var source = canvas.dataset.fragmentUrl;
             xhr.get(source, function (error, response, body) {
                 _this.load(body, _this.vertexString);
             });
         }
 
         // Load shader
-        if (canvas.hasAttribute('data-vertex')) {
-            this.vertexString = canvas.getAttribute('data-vertex');
-        } else if (canvas.hasAttribute('data-vertex-url')) {
-            var _source = canvas.getAttribute('data-vertex-url');
+        if (canvas.dataset.vertex) {
+            this.vertexString = canvas.dataset.vertex;
+        } else if (canvas.dataset.vertexUrl) {
+            var _source = canvas.dataset.vertexUrl;
             xhr.get(_source, function (error, response, body) {
                 _this.load(_this.fragmentString, body);
             });
@@ -1065,8 +1115,8 @@ var GlslCanvas = function () {
         this.gl.vertexAttribPointer(verticesLoc, 2, gl.FLOAT, false, 0, 0);
 
         // load TEXTURES
-        if (canvas.hasAttribute('data-textures')) {
-            var imgList = canvas.getAttribute('data-textures').split(',');
+        if (canvas.dataset.textures) {
+            var imgList = canvas.dataset.textures.split(',');
             for (var nImg in imgList) {
                 this.setUniform('u_tex' + nImg, imgList[nImg]);
             }
@@ -1088,16 +1138,27 @@ var GlslCanvas = function () {
                 sandbox.setMouse(mouse);
             }
 
+            // MOD by katwat
+            sandbox.render();
             if (sandbox.resize()) {
+                sandbox.forceRenderCount = Object.keys(sandbox.buffers).length ? 2 : 1; // refill swappable buffers
+            }
+            if (sandbox.forceRenderCount > 0) {
+                sandbox.forceRenderCount--;
                 sandbox.forceRender = true;
             }
-
-            sandbox.render();
             sandbox.animationFrameRequest = window.requestAnimationFrame(RenderLoop);
         }
 
         // Start
         this.setMouse({ x: 0, y: 0 });
+
+        // MOD by katwat
+        this.frame = 0;
+        this.frameRate = 0.0;
+        this.fpsFrame = 0;
+        this.fpsPrev = this.timePrev = performance.now();
+
         RenderLoop();
         return this;
     }
@@ -1148,6 +1209,8 @@ var GlslCanvas = function () {
             this.nTime = (this.fragmentString.match(/u_time/g) || []).length;
             this.nDate = (this.fragmentString.match(/u_date/g) || []).length;
             this.nMouse = (this.fragmentString.match(/u_mouse/g) || []).length;
+            this.nFrame = (this.fragmentString.match(/u_frame/g) || []).length; // MOD by katwat
+            this.nFrameRate = (this.fragmentString.match(/u_frameRate/g) || []).length; // MOD by katwat
             this.animated = this.nDate > 1 || this.nTime > 1 || this.nMouse > 1;
 
             var nTextures = this.fragmentString.search(/sampler2D/g);
@@ -1204,7 +1267,7 @@ var GlslCanvas = function () {
             this.trigger('load', {});
 
             this.forceRender = true;
-            this.render();
+            //this.render(); // MOD by katwat
         }
     }, {
         key: 'test',
@@ -1425,13 +1488,31 @@ var GlslCanvas = function () {
         key: 'render',
         value: function render() {
             this.visible = isCanvasVisible(this.canvas);
+
+            // MOD by katwat
+            var now = performance.now();
+            this.timeDelta = (now - this.timePrev) / 1000.0;
+            this.timePrev = now;
+
+            // MOD by katwat
+            this.fpsFrame++;
+            var delta = now - this.fpsPrev;
+            if (delta > 1000) {
+                this.frameRate = this.fpsFrame * 1000 / delta;
+                this.fpsPrev = now;
+                this.fpsFrame = 0;
+            }
+
             if (this.forceRender || this.change || this.animated && this.visible && !this.paused) {
 
                 // Update Uniforms when are need
                 var date = new Date();
-                var now = performance.now();
-                this.timeDelta = (now - this.timePrev) / 1000.0;
-                this.timePrev = now;
+
+                // MOD by katwat
+                //let now = performance.now();
+                //this.timeDelta = (now - this.timePrev) / 1000.0;
+                //this.timePrev = now;
+
                 if (this.nDelta > 1) {
                     // set the delta time uniform
                     this.uniform('1f', 'float', 'u_delta', this.timeDelta);
@@ -1439,12 +1520,23 @@ var GlslCanvas = function () {
 
                 if (this.nTime > 1) {
                     // set the elapsed time uniform
-                    this.uniform('1f', 'float', 'u_time', (now - this.timeLoad) / 1000.0);
+                    //this.uniform('1f', 'float', 'u_time', (now - this.timeLoad) / 1000.0);
+                    this.uniform('1f', 'float', 'u_time', this.timeElap); // MOD by katwat
                 }
 
                 if (this.nDate) {
                     // Set date uniform: year/month/day/time_in_sec
                     this.uniform('4f', 'float', 'u_date', date.getFullYear(), date.getMonth(), date.getDate(), date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds() + date.getMilliseconds() * 0.001);
+                }
+
+                // MOD by katwat
+                if (this.nFrame > 1) {
+                    // current frame
+                    this.uniform('1i', 'int', 'u_frame', this.frame);
+                }
+                if (this.nFrameRate > 1) {
+                    // number of frames rendered per second
+                    this.uniform('1f', 'float', 'u_frameRate', this.frameRate);
                 }
 
                 // set the resolution uniform
@@ -1467,6 +1559,10 @@ var GlslCanvas = function () {
                 this.trigger('render', {});
                 this.change = false;
                 this.forceRender = false;
+
+                // MOD by katwat
+                this.timeElap += this.timeDelta; // update timer only during play.
+                this.frame++;
             }
         }
     }, {
@@ -1584,16 +1680,21 @@ var GlslCanvas = function () {
     }, {
         key: 'createBuffer',
         value: function createBuffer(W, H, program) {
+            // MOD by katwat
             var gl = this.gl;
+            var RGBA32F = this.isWebGL2 ? gl.RGBA32F : gl.RGBA; // why?
             var index = this.BUFFER_COUNT;
             this.BUFFER_COUNT += 2;
-            gl.getExtension('OES_texture_float');
+            //gl.getExtension('OES_texture_float'); -> setupWebGL()
             var texture = gl.createTexture();
             gl.activeTexture(gl.TEXTURE0 + index);
             gl.bindTexture(gl.TEXTURE_2D, texture);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.FLOAT, null);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texImage2D(gl.TEXTURE_2D, 0, RGBA32F, W, H, 0, gl.RGBA, gl.FLOAT, null);
+            //gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
             var buffer = gl.createFramebuffer();
@@ -1604,30 +1705,41 @@ var GlslCanvas = function () {
                 W: W,
                 H: H,
                 resize: function resize(W, H) {
-                    gl.bindFramebuffer(gl.FRAMEBUFFER, buffer);
+                    /* Quit copying overlapping areas.
+                    //gl.bindFramebuffer(gl.FRAMEBUFFER, buffer);
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, this.buffer);
                     var minW = Math.min(W, this.W);
                     var minH = Math.min(H, this.H);
-                    var pixels = new Float32Array(minW * minH * 4);
-                    gl.readPixels(0, 0, minW, minH, gl.RGBA, gl.FLOAT, pixels);
+                    //var pixels = new Float32Array(minW * minH * 4);
+                    //gl.readPixels(0, 0, minW, minH, gl.RGBA, gl.FLOAT, pixels);
+                    var pixels = new Uint8Array(minW * minH * 4);
+                    gl.readPixels(0, 0, minW, minH, gl.RGBA, gl.UNSIGNED_BYTE, pixels);*/
                     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-                    var newIndex = index + 1;
+                    var newIndex = this.index + 1;
                     var newTexture = gl.createTexture();
                     gl.activeTexture(gl.TEXTURE0 + newIndex);
                     gl.bindTexture(gl.TEXTURE_2D, newTexture);
-                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.FLOAT, null);
-                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+                    gl.texImage2D(gl.TEXTURE_2D, 0, RGBA32F, W, H, 0, gl.RGBA, gl.FLOAT, null);
+                    //gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+                    //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+                    //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
                     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
                     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-                    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, minW, minH, gl.RGBA, gl.FLOAT, pixels);
+                    /*//gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, minW, minH, RGBA32F, gl.FLOAT, pixels);
+                    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, minW, minH, gl.RGBA, gl.UNSIGNED_BYTE, pixels);*/
                     var newBuffer = gl.createFramebuffer();
                     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-                    gl.deleteTexture(texture);
-                    gl.activeTexture(gl.TEXTURE0 + index);
+                    //gl.deleteTexture(texture);
+                    gl.deleteTexture(this.texture);
+                    gl.activeTexture(gl.TEXTURE0 + this.index);
                     gl.bindTexture(gl.TEXTURE_2D, newTexture);
-                    index = this.index = index;
+                    /*index = this.index = index;
                     texture = this.texture = newTexture;
-                    buffer = this.buffer = newBuffer;
+                    buffer = this.buffer = newBuffer;*/
+                    this.texture = newTexture;
+                    this.buffer = newBuffer;
                     this.W = W;
                     this.H = H;
                 }
@@ -1654,7 +1766,7 @@ var GlslCanvas = function () {
     }, {
         key: 'version',
         value: function version() {
-            return '0.1.7';
+            return '0.1.7 (MOD by katwat)';
         }
     }]);
     return GlslCanvas;
